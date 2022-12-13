@@ -1,0 +1,225 @@
+# Copyright 2022 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: Template
+metadata:
+  creationTimestamp: null
+  name: ${APP_NAME}
+objects:
+- apiVersion: v1
+  kind: Route
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_NAME}
+    name: ${APP_NAME}
+  spec:
+    host: ${NGINX_ROUTE_HOSTNAME}
+    port:
+      targetPort: ${NGINX_DEFAULT_HTTP_PORT}-tcp
+    to:
+      kind: Service
+      name: ${APP_NAME}
+      weight: 100
+    wildcardPolicy: None
+  status:
+    ingress: null
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    creationTimestamp: null
+    generation: 1
+    labels:
+      app: ${APP_NAME}
+    name: ${APP_NAME}
+  spec:
+    replicas: 1
+    selector:
+      app: ${APP_NAME}
+      deploymentconfig: ${APP_NAME}
+    strategy:
+      resources: {}
+      rollingParams:
+        intervalSeconds: 1
+        maxSurge: 25%
+        maxUnavailable: 25%
+        timeoutSeconds: 600
+        updatePeriodSeconds: 1
+      type: Rolling
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          app: ${APP_NAME}
+          deploymentconfig: ${APP_NAME}
+      spec:
+        containers:
+        - args:
+          command:
+          - /usr/libexec/s2i/run
+          image: centos/${NGINX_VERSION}-centos7
+          imagePullPolicy: Always
+          name: ${APP_NAME}
+          ports:
+          - containerPort: ${NGINX_DEFAULT_HTTP_PORT}
+            protocol: TCP
+          - containerPort: 8443
+            protocol: TCP
+          readinessProbe:
+            failureThreshold: 3
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: ${NGINX_DEFAULT_HTTP_PORT}-tcp
+            timeoutSeconds: 20
+          resources: {}
+          terminationMessagePath: /dev/termination-log
+          volumeMounts:
+          - mountPath: /etc/opt/rh/rh-nginx112/nginx/
+            name: volume-s35u4
+          - mountPath: /etc/opt/rh/rh-nginx112/nginx/conf.d
+            name: volume-1l43r
+          - mountPath: /etc/opt/rh/rh-nginx112/nginx/default.d
+            name: volume-tlwx7
+          - mountPath: /opt/app-root/src
+            name: nginx-root
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - configMap:
+            defaultMode: 420
+            name: nginx-config
+          name: volume-s35u4
+        - configMap:
+            defaultMode: 420
+            name: nginx-conf.d
+          name: volume-1l43r
+        - configMap:
+            defaultMode: 420
+            name: nginx-default.d
+          name: volume-tlwx7
+        - name: nginx-root
+          persistentVolumeClaim:
+            claimName: "nginx-root"
+    test: false
+    triggers:
+    - type: ConfigChange
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - nginx
+        from:
+          kind: ImageStreamTag
+          name: ${NGINX_VERSION}-centos7:latest
+      type: ImageChange
+  status: {}
+- apiVersion: v1
+  kind: Service
+  metadata:
+    creationTimestamp: null
+    labels:
+      app: ${APP_NAME}
+    name: ${APP_NAME}
+  spec:
+    ports:
+    - name: ${NGINX_DEFAULT_HTTP_PORT}-tcp
+      port: ${NGINX_DEFAULT_HTTP_PORT}
+      protocol: TCP
+    - name: 8443-tcp
+      port: 8443
+      protocol: TCP
+      targetPort: 8443
+    selector:
+      app: ${APP_NAME}
+      deploymentconfig: ${APP_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+  status:
+    loadBalancer: {}
+- apiVersion: v1
+  kind: ImageStream
+  metadata:
+    creationTimestamp: null
+    generation: 2
+    labels:
+      app: ${APP_NAME}
+    name: ${NGINX_VERSION}-centos7
+  spec:
+    tags:
+    - annotations:
+        openshift.io/imported-from: centos/${NGINX_VERSION}-centos7
+      from:
+        kind: DockerImage
+        name: centos/${NGINX_VERSION}-centos7:latest
+      generation: 2
+      importPolicy: {}
+      name: latest
+  status:
+    dockerImageRepository: ""
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    annotations:
+    creationTimestamp: null
+    name: nginx-root
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: ${ROOT_DIRECTORY_SIZE_IN_GB}Gi
+- apiVersion: v1
+  data:
+    virtualhost.conf: ""
+  kind: ConfigMap
+  metadata:
+    creationTimestamp: null
+    name: nginx-conf.d
+- apiVersion: v1
+  data:
+    default.conf: ""
+  kind: ConfigMap
+  metadata:
+    creationTimestamp: null
+    name: nginx-default.d
+parameters:
+  - name: NGINX_VERSION
+    description: "Specify the nginx version you are using, valid options are: nginx-112, nginx-110, nginx-18, nginx-16" 
+    value: "nginx-112"
+    required: true   
+  - name: NGINX_DEFAULT_HTTP_PORT
+    description: "Default port nginx uses to listen on, if you specify a port lower than 1024, the container must run as privileged"
+    value: "8080"
+    required: true
+  - name: NGINX_ACCESS_LOG_PATH
+    description: "Path where nginx should write the access logs, either specify the file or if you want it the logs to be printed in the container logs redirect it to STDOUT by entering the value /dev/stdout "
+    value: "/var/opt/rh/rh-nginx112/log/nginx/access.log"
+    required: true
+  - name: NGINX_ERROR_LOG_PATH
+    description: "Path where nginx should write the error logs, either specify the file or if you want it the logs to be printed in the container logs use  /dev/stdout"
+    value: "stderr"
+    required: true
+  - name: NGINX_ROUTE_HOSTNAME
+    value: ""
+    required: true 
+  - name: APP_NAME
+    value: "nginx"
+    required: true
+  - name: ROOT_DIRECTORY_SIZE_IN_GB
+    value: "5"
+    required: true
